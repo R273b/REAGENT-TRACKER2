@@ -1106,6 +1106,64 @@ function Reports({ reagents, logs, departments, role, onPurgeReagent, onPurgeLog
     XLSX.writeFile(wb, `reagent-report-${dateFrom}-to-${dateTo}.xlsx`);
   }
 
+  // A real, laid-out PDF report (proper tables, one section per month —
+  // same grouping as the Excel export) instead of just printing the raw
+  // on-screen page, which doesn't reflow into a clean document.
+  async function exportPDF() {
+    const { jsPDF } = await import("jspdf");
+    await import("jspdf-autotable");
+    const PDF_COLUMNS = [
+      "Reagent","Lot Number","Device","Fridge","Received By","Received Date","Expiry Date",
+      "Qty Received","Qty Remaining","Unit","Disposed By","Disposed Date",
+      "Consumption Date","Amount Used","Used By","Tested by QC",
+    ];
+    const rows = [];
+    matchedLots.forEach((r) => {
+      const rLogs = logsFor(r.id);
+      const year = (r.date_added || "").slice(0, 4) || "Unknown";
+      const month = (r.date_added || "").slice(5, 7) || "00";
+      const base = {
+        Reagent: r.name, "Lot Number": r.lot_number, Device: r.device || "", Fridge: r.fridge_name || "",
+        "Received By": r.added_by, "Received Date": r.date_added, "Expiry Date": r.expiry_date,
+        "Qty Received": r.quantity_received, "Qty Remaining": r.current_quantity, Unit: r.unit,
+        "Disposed By": r.disposed_by || "", "Disposed Date": r.disposed_date || "",
+      };
+      if (rLogs.length === 0) {
+        rows.push({ ...base, "Consumption Date": "", "Amount Used": "", "Used By": "", "Tested by QC": "", __year: year, __month: month });
+      } else {
+        rLogs.forEach((l) => {
+          rows.push({ ...base, "Consumption Date": l.date, "Amount Used": l.amount, "Used By": l.used_by, "Tested by QC": l.tested_by_qc ? "Yes" : "No", __year: year, __month: month });
+        });
+      }
+    });
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const byMonth = {};
+    rows.forEach((r) => { (byMonth[`${r.__year}-${r.__month}`] ||= []).push(r); });
+    const keys = Object.keys(byMonth).sort((a, b) => (sortDir === "oldest" ? a.localeCompare(b) : b.localeCompare(a)));
+
+    if (keys.length === 0) {
+      doc.text("No records match this filter.", 40, 40);
+    } else {
+      keys.forEach((key, i) => {
+        const [year, month] = key.split("-");
+        const title = `${MONTH_NAMES[parseInt(month, 10) - 1] || "Unknown"} ${year}`;
+        if (i > 0) doc.addPage();
+        doc.setFontSize(13);
+        doc.text(`Reagent Report — ${title}`, 30, 28);
+        doc.autoTable({
+          startY: 38,
+          head: [PDF_COLUMNS],
+          body: byMonth[key].map((r) => PDF_COLUMNS.map((c) => (r[c] === undefined || r[c] === null ? "" : String(r[c])))),
+          styles: { fontSize: 6.5, cellPadding: 2 },
+          headStyles: { fillColor: [15, 113, 115], textColor: 255, fontStyle: "bold" },
+          margin: { left: 20, right: 20 },
+        });
+      });
+    }
+    doc.save(`reagent-report-${dateFrom}-to-${dateTo}.pdf`);
+  }
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
@@ -1113,6 +1171,7 @@ function Reports({ reagents, logs, departments, role, onPurgeReagent, onPurgeLog
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => window.print()} className="no-print" style={{ background: "none", border: "1px solid #C7D1CE", color: "#516361", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}><Printer size={14} /> Print</button>
           <button onClick={exportExcel} className="no-print" style={{ background: "#0F7173", color: "#fff", border: "none", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Download size={14} /> Export Excel</button>
+          <button onClick={exportPDF} className="no-print" style={{ background: "#B5473A", color: "#fff", border: "none", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><FileText size={14} /> Export PDF</button>
         </div>
       </div>
 
