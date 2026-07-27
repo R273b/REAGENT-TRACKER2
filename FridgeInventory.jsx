@@ -29,6 +29,18 @@ export default function FridgeInventory({ username, logActivity }) {
   const [refrigeratorName, setRefrigeratorName] = useState("");
   const [countedBy, setCountedBy] = useState("");
   const [dirty, setDirty] = useState(false);
+
+  // Auto-save: once something's been edited, wait for a short pause in
+  // typing (2.5s) and save automatically — so a long count session that
+  // never gets a manual "Save" click still ends up persisted. The manual
+  // Save button still works too, for anyone who wants it to happen right
+  // away instead of waiting.
+  useEffect(() => {
+    if (!dirty) return;
+    const timer = setTimeout(() => { saveAll(); }, 2500);
+    return () => clearTimeout(timer);
+  }, [dirty, all]);
+
   const [saveMsg, setSaveMsg] = useState("");
   const [deletedIds, setDeletedIds] = useState([]);
   const [tempLogs, setTempLogs] = useState([]);

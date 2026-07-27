@@ -29,6 +29,15 @@ export default function OrderPlan({ reagents, devices, logActivity }) {
   const [all, setAll] = useState(null);
   const [month, setMonth] = useState(nextMonthISO());
   const [dirty, setDirty] = useState(false);
+
+  // Same debounced auto-save as the fridge inventory sheet — saves 2.5s
+  // after the last edit, no manual click required.
+  useEffect(() => {
+    if (!dirty) return;
+    const timer = setTimeout(() => { saveAll(); }, 2500);
+    return () => clearTimeout(timer);
+  }, [dirty, all]);
+
   const [saveMsg, setSaveMsg] = useState("");
   const [deletedIds, setDeletedIds] = useState([]);
 
