@@ -1,56 +1,100 @@
 import React, { useState } from "react";
 import { X, ScanLine, Check } from "lucide-react";
 import BarcodeScanner from "./BarcodeScanner";
-
-const DEPARTMENTS = ["Chemistry", "Hematology", "Blood Bank"];
+import { parseGS1 } from "./gs1Parser";
+import SearchableSelect from "./SearchableSelect";
+import { supabase } from "./supabaseClient";
 
 const INSPECTION_ITEMS = [
   { key: "intact_container", label: "Intact container" },
-  { key: "complete_compound", label: "Complete compound" },
+  { key: "complete_compound", label: "Complete components" },
   { key: "expiration_validity", label: "Expiration validity" },
-  { key: "lot_matches_kit", label: "Lot number matches kit lot number (if kit)" },
+  { key: "lot_matches_kit", label: "The lot number of the kit is the same lot number of components" },
   { key: "storage_condition_ok", label: "Storage condition during transport" },
 ];
 
 const inputStyle = { width: "100%", border: "1px solid #C7D1CE", borderRadius: 7, padding: "9px 11px", fontSize: 14, marginTop: 4, boxSizing: "border-box" };
 const labelStyle = { fontSize: 12.5, fontWeight: 600, color: "#516361" };
 
-export default function ReceiveWizard({ presets, role, onClose, onSubmit }) {
+export default function ReceiveWizard({ presets, reagents, devices, fridgeNames, role, departments, username, onClose, onSubmit }) {
   const [step, setStep] = useState(1);
-  const [customName, setCustomName] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
 
   const [form, setForm] = useState({
-    name: "", department: "Chemistry", unit: "mL",
-    lotNumber: "", quantityReceived: "", expiryDate: "",
-    receivedBy: "", receivedDate: new Date().toISOString().slice(0, 10),
+    name: "", department: departments[0] || "", unit: "box", itemType: "Reagent", device: "", fridgeName: "",
+    lotNumber: "", boxesReceived: "1", kitsPerBox: "", quantityReceived: "", expiryDate: "",
+    receivedBy: username || "", receivedDate: new Date().toISOString().slice(0, 10),
     lowStockThreshold: "",
     intact_container: true,
     complete_compound: true,
     expiration_validity: true,
     lot_matches_kit: true,
     storage_condition_ok: true,
-    tested_by_qc: false,
+    receivingNotes: "",
+    inspectionNotes: "",
   });
+  // Once you touch the Fridge field yourself, auto-routing stops overriding it.
+  const [fridgeTouched, setFridgeTouched] = useState(false);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  function pickPreset(name) {
-    const p = presets.find((x) => x.name === name);
-    if (p) setForm((f) => ({ ...f, name: p.name, department: p.department, unit: p.unit }));
+  // Item preset takes priority over device for the auto-picked fridge
+  // (e.g. an ABO reagent preset always routes to R0008 no matter the device).
+  function autoFridgeFor(nextForm) {
+    const p = presets.find((x) => x.name === nextForm.name);
+    if (p?.default_fridge_name) return p.default_fridge_name;
+    const d = (devices || []).find((x) => x.name === nextForm.device);
+    if (d?.default_fridge_name) return d.default_fridge_name;
+    return null;
+  }
+
+  function handleNameChange(value) {
+    const p = presets.find((x) => x.name === value);
+    setForm((f) => {
+      const next = p ? { ...f, name: p.name, department: p.department, unit: p.unit } : { ...f, name: value };
+      if (!fridgeTouched) {
+        const auto = autoFridgeFor(next);
+        if (auto) next.fridgeName = auto;
+      }
+      return next;
+    });
+  }
+
+  function handleDeviceChange(value) {
+    setForm((f) => {
+      const next = { ...f, device: value };
+      if (!fridgeTouched) {
+        const auto = autoFridgeFor(next);
+        if (auto) next.fridgeName = auto;
+      }
+      return next;
+    });
+  }
+
+  function handleFridgeChange(value) {
+    setFridgeTouched(true);
+    setForm((f) => ({ ...f, fridgeName: value }));
   }
 
   function toggle(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  const step1Valid = form.name && form.lotNumber && form.quantityReceived && form.expiryDate && form.receivedBy && form.receivedDate;
+  const devicesForDept = (devices || []).filter((d) => d.department === form.department);
+  const presetsForDept = form.department ? (presets || []).filter((p) => p.department === form.department) : presets;
+  const realNamesForDept = form.department
+    ? [...new Set((reagents || []).filter((r) => !r.deleted && r.department === form.department).map((r) => r.name))]
+    : [...new Set((reagents || []).filter((r) => !r.deleted).map((r) => r.name))];
+  const itemOptions = [...new Set([...presetsForDept.map((p) => p.name), ...realNamesForDept])].sort();
+
+  const computedQty = Number(form.boxesReceived || 0) * Number(form.kitsPerBox || 1);
+  const step1Valid = form.name && form.lotNumber && form.boxesReceived && form.expiryDate && form.receivedBy && form.receivedDate;
 
   function finish() {
     onSubmit({
       ...form,
-      quantityReceived: Number(form.quantityReceived),
-      lowStockThreshold: Number(form.lowStockThreshold) || Math.ceil(Number(form.quantityReceived) * 0.15),
+      quantityReceived: computedQty,
+      lowStockThreshold: Number(form.lowStockThreshold) || Math.ceil(computedQty * 0.15),
     });
   }
 
@@ -65,28 +109,47 @@ export default function ReceiveWizard({ presets, role, onClose, onSubmit }) {
 
         {step === 1 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-            <label style={labelStyle}>Item
-              {presets.length > 0 && !customName ? (
-                <select style={inputStyle} value={form.name} onChange={(e) => pickPreset(e.target.value)}>
-                  <option value="">Select from list…</option>
-                  {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                </select>
-              ) : (
-                <input style={inputStyle} value={form.name} onChange={set("name")} placeholder="e.g. Glucose reagent" />
-              )}
-              {presets.length > 0 && (
-                <button type="button" onClick={() => setCustomName((c) => !c)} style={{ background: "none", border: "none", color: "#0F7173", fontSize: 11.5, fontWeight: 600, marginTop: 4, padding: 0 }}>
-                  {customName ? "Choose from preset list instead" : "Type a name not in the list"}
-                </button>
-              )}
+            <label style={labelStyle}>Item (click to browse, or type to search)
+              <SearchableSelect
+                value={form.name}
+                onChange={handleNameChange}
+                options={itemOptions}
+                placeholder="Search or type a new name"
+                style={{ marginTop: 4 }}
+              />
             </label>
             <label style={labelStyle}>Department
-              <select style={inputStyle} value={form.department} onChange={set("department")}>
-                {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              <select style={inputStyle} value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value, device: "" }))}>
+                {departments.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </label>
-            <label style={labelStyle}>Received by (your name)<input style={inputStyle} value={form.receivedBy} onChange={set("receivedBy")} /></label>
-            <label style={labelStyle}>Date of receipt<input type="date" style={inputStyle} value={form.receivedDate} onChange={set("receivedDate")} /></label>
+            <label style={labelStyle}>Device / analyzer (optional — click to browse, or type to search)
+              <SearchableSelect
+                value={form.device}
+                onChange={handleDeviceChange}
+                options={devicesForDept.map((d) => d.name)}
+                placeholder="e.g. Cobas c311"
+                style={{ marginTop: 4 }}
+              />
+            </label>
+            <label style={labelStyle}>Fridge / storage location {fridgeTouched ? "" : "(auto-picked from item/device — tap to override)"}
+              <SearchableSelect
+                value={form.fridgeName}
+                onChange={handleFridgeChange}
+                options={fridgeNames || []}
+                placeholder="e.g. R0008, or Room Temperature"
+                style={{ marginTop: 4 }}
+              />
+            </label>
+            <label style={labelStyle}>Type
+              <select style={inputStyle} value={form.itemType} onChange={set("itemType")}>
+                <option value="Reagent">Reagent</option>
+                <option value="QC">QC</option>
+                <option value="Cal">Cal</option>
+              </select>
+            </label>
+            <label style={labelStyle}>Received by (signed in as)<input style={{ ...inputStyle, background: "#F0F3F2", color: "#516361" }} value={form.receivedBy} readOnly /></label>
+            <label style={labelStyle}>Date of receipt<input type="date" lang="en-US" dir="ltr" style={inputStyle} value={form.receivedDate} onChange={set("receivedDate")} /></label>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
               <label style={{ ...labelStyle, flex: 1 }}>Lot number<input style={inputStyle} value={form.lotNumber} onChange={set("lotNumber")} /></label>
               <button type="button" onClick={() => setShowScanner(true)} style={{ background: "#F0F3F2", border: "1px solid #C7D1CE", borderRadius: 7, padding: "9px 10px" }}>
@@ -94,11 +157,18 @@ export default function ReceiveWizard({ presets, role, onClose, onSubmit }) {
               </button>
               <label style={{ ...labelStyle, width: 80 }}>Unit<input style={inputStyle} value={form.unit} onChange={set("unit")} /></label>
             </div>
-            <label style={labelStyle}>Expiry date<input type="date" style={inputStyle} value={form.expiryDate} onChange={set("expiryDate")} /></label>
+            <label style={labelStyle}>Expiry date<input type="date" lang="en-US" dir="ltr" style={inputStyle} value={form.expiryDate} onChange={set("expiryDate")} /></label>
             <div style={{ display: "flex", gap: 10 }}>
-              <label style={{ ...labelStyle, flex: 1 }}>Quantity received<input type="number" style={inputStyle} value={form.quantityReceived} onChange={set("quantityReceived")} /></label>
+              <label style={{ ...labelStyle, flex: 1 }}>Boxes received<input type="number" min="1" style={inputStyle} value={form.boxesReceived} onChange={set("boxesReceived")} /></label>
+              <label style={{ ...labelStyle, flex: 1 }}>Kits per box (optional)<input type="number" min="1" placeholder="e.g. 4" style={inputStyle} value={form.kitsPerBox} onChange={set("kitsPerBox")} /></label>
               <label style={{ ...labelStyle, flex: 1 }}>Low stock alert below<input type="number" style={inputStyle} value={form.lowStockThreshold} onChange={set("lowStockThreshold")} placeholder="auto" /></label>
             </div>
+            <div style={{ fontSize: 12.5, color: "#516361", background: "#F0F3F2", borderRadius: 6, padding: "6px 10px" }}>
+              Total tracked as: <b>{computedQty || 0} {form.unit}</b> ({form.boxesReceived || 0} box{Number(form.boxesReceived) === 1 ? "" : "es"}{form.kitsPerBox ? ` × ${form.kitsPerBox} kit(s) per box` : ""})
+            </div>
+            <label style={labelStyle}>Notes (optional)
+              <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={form.receivingNotes} onChange={set("receivingNotes")} placeholder="Any additional comment about this delivery" />
+            </label>
 
             <button
               disabled={!step1Valid}
@@ -116,18 +186,11 @@ export default function ReceiveWizard({ presets, role, onClose, onSubmit }) {
             {INSPECTION_ITEMS.map((item) => (
               <YesNoRow key={item.key} label={item.label} value={form[item.key]} onChange={(v) => toggle(item.key, v)} />
             ))}
+            <label style={labelStyle}>Inspection notes (optional)
+              <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={form.inspectionNotes} onChange={set("inspectionNotes")} placeholder="Any comment about a failed check or condition" />
+            </label>
             <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
               <button onClick={() => setStep(1)} style={{ flex: 1, background: "#F0F3F2", color: "#1B2B2E", border: "1px solid #C7D1CE", borderRadius: 8, padding: "11px", fontWeight: 700, fontSize: 14 }}>Back</button>
-              <button onClick={() => setStep(3)} style={{ flex: 2, background: "#0F7173", color: "#fff", border: "none", borderRadius: 8, padding: "11px", fontWeight: 700, fontSize: 14 }}>Next: Testing</button>
-            </div>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-            <YesNoRow label="Tested by QC" value={form.tested_by_qc} onChange={(v) => toggle("tested_by_qc", v)} />
-            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-              <button onClick={() => setStep(2)} style={{ flex: 1, background: "#F0F3F2", color: "#1B2B2E", border: "1px solid #C7D1CE", borderRadius: 8, padding: "11px", fontWeight: 700, fontSize: 14 }}>Back</button>
               <button onClick={finish} style={{ flex: 2, background: "#0F7173", color: "#fff", border: "none", borderRadius: 8, padding: "11px", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <Check size={15} /> Add to inventory
               </button>
@@ -136,14 +199,22 @@ export default function ReceiveWizard({ presets, role, onClose, onSubmit }) {
         )}
       </div>
       {showScanner && (
-        <BarcodeScanner onClose={() => setShowScanner(false)} onDetected={(text) => { setForm((f) => ({ ...f, lotNumber: text })); setShowScanner(false); }} />
+        <BarcodeScanner onClose={() => setShowScanner(false)} onDetected={(text) => {
+          const gs1 = parseGS1(text);
+          if (gs1) {
+            setForm((f) => ({ ...f, lotNumber: gs1.lot || f.lotNumber, expiryDate: gs1.expiryDate || f.expiryDate }));
+          } else {
+            setForm((f) => ({ ...f, lotNumber: text }));
+          }
+          setShowScanner(false);
+        }} />
       )}
     </div>
   );
 }
 
 function StepIndicator({ step }) {
-  const labels = ["Details", "Inspection", "Testing"];
+  const labels = ["Details", "Inspection"];
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
       {labels.map((l, i) => (
@@ -156,7 +227,7 @@ function StepIndicator({ step }) {
   );
 }
 
-function YesNoRow({ label, value, onChange }) {
+export function YesNoRow({ label, value, onChange }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F7F9F8", border: "1px solid #E1E8E5", borderRadius: 8, padding: "10px 12px" }}>
       <div style={{ flex: 1, fontSize: 13.5 }}>{label}</div>
