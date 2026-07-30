@@ -29,17 +29,7 @@ export default function FridgeInventory({ username, logActivity }) {
   const [refrigeratorName, setRefrigeratorName] = useState("");
   const [countedBy, setCountedBy] = useState("");
   const [dirty, setDirty] = useState(false);
-
-  // Auto-save: once something's been edited, wait for a short pause in
-  // typing (2.5s) and save automatically — so a long count session that
-  // never gets a manual "Save" click still ends up persisted. The manual
-  // Save button still works too, for anyone who wants it to happen right
-  // away instead of waiting.
-  useEffect(() => {
-    if (!dirty) return;
-    const timer = setTimeout(() => { saveAll(); }, 2500);
-    return () => clearTimeout(timer);
-  }, [dirty, all]);
+  const savingRef = useRef(false);
 
   const [saveMsg, setSaveMsg] = useState("");
   const [deletedIds, setDeletedIds] = useState([]);
@@ -208,6 +198,8 @@ export default function FridgeInventory({ username, logActivity }) {
   }
 
   async function saveAll() {
+    if (savingRef.current) return; // a save is already running — don't start a second one
+    savingRef.current = true;
     setSaveMsg("Saving…");
     if (deletedIds.length) {
       await supabase.from("fridge_inventory").delete().in("id", deletedIds);
@@ -243,6 +235,7 @@ export default function FridgeInventory({ username, logActivity }) {
     await loadAll();
     setSaveMsg("Saved ✓");
     setTimeout(() => setSaveMsg(""), 2500);
+    savingRef.current = false;
   }
 
   async function handleFridgeImport({ month: importMonth, refrigeratorName: importFridge, rows }) {
@@ -284,7 +277,6 @@ export default function FridgeInventory({ username, logActivity }) {
           {saveMsg && <span style={{ fontSize: 12.5, color: "#2F6B4F", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={13} /> {saveMsg}</span>}
           <button onClick={() => window.print()} style={{ background: "none", border: "1px solid #C7D1CE", color: "#516361", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}><Printer size={14} /> Print</button>
           <button onClick={exportExcel} style={{ background: "var(--accent-2)", color: "#fff", border: "none", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}><Download size={14} /> Export Excel</button>
-          <button onClick={saveAll} disabled={!dirty} style={{ background: dirty ? "var(--accent-1)" : "#C7D1CE", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, cursor: dirty ? "pointer" : "default" }}><Save size={14} /> Save</button>
         </div>
       </div>
       <div className="no-print" style={{ fontSize: 13, color: "#7B8E8A", marginBottom: 20 }}>Monthly stock count sheet — matches your paper form. Not shown in Reports. Edits are local until you press <b>Save</b>.</div>
@@ -356,7 +348,7 @@ export default function FridgeInventory({ username, logActivity }) {
                         <input style={cellInputStyle} value={r.lot_number} onChange={(e) => updateRow(r.id, "lot_number", e.target.value)} />
                       </td>
                       <td style={tdStyle}>
-                        <input style={{ ...cellInputStyle, textAlign: "center" }} value={r.quantity} onChange={(e) => updateRow(r.id, "quantity", e.target.value)} placeholder="e.g. 1½" />
+                        <input style={{ ...cellInputStyle, textAlign: "center" }} value={r.quantity} onChange={(e) => updateRow(r.id, "quantity", e.target.value)} placeholder="e.g. 1 box x 4" />
                       </td>
                       <td style={tdStyle}>
                         <input type="date" lang="en-US" dir="ltr" style={cellInputStyle} value={r.expiry_date || ""} onChange={(e) => updateRow(r.id, "expiry_date", e.target.value)} />

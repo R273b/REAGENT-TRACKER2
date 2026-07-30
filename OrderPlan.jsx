@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { ClipboardList, Plus, Trash2, Save, CheckCircle2 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -29,12 +29,14 @@ export default function OrderPlan({ reagents, devices, logActivity }) {
   const [all, setAll] = useState(null);
   const [month, setMonth] = useState(nextMonthISO());
   const [dirty, setDirty] = useState(false);
+  const savingRef = useRef(false);
 
   // Same debounced auto-save as the fridge inventory sheet — saves 2.5s
-  // after the last edit, no manual click required.
+  // after the last edit, no manual click required. savingRef prevents the
+  // timer and a manual Save click from ever running saveAll() at once.
   useEffect(() => {
     if (!dirty) return;
-    const timer = setTimeout(() => { saveAll(); }, 2500);
+    const timer = setTimeout(() => { if (!savingRef.current) saveAll(); }, 2500);
     return () => clearTimeout(timer);
   }, [dirty, all]);
 
@@ -86,6 +88,8 @@ export default function OrderPlan({ reagents, devices, logActivity }) {
   }
 
   async function saveAll() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaveMsg("Saving…");
     if (deletedIds.length) await supabase.from("device_order_plans").delete().in("id", deletedIds);
     const currentRows = (all || []).filter((r) => r.month === month);
@@ -103,6 +107,7 @@ export default function OrderPlan({ reagents, devices, logActivity }) {
     await loadAll();
     setSaveMsg("Saved ✓");
     setTimeout(() => setSaveMsg(""), 2500);
+    savingRef.current = false;
   }
 
   if (all === null) return <div style={{ padding: 40, textAlign: "center", color: "#8A9694" }}>Loading…</div>;
