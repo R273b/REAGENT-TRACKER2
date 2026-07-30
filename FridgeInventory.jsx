@@ -200,13 +200,9 @@ export default function FridgeInventory({ username, logActivity }) {
   async function saveAll() {
     if (savingRef.current) return; // a save is already running — don't start a second one
 
-    // Boxes is required for any row that's actually been filled in — an
-    // empty placeholder row (no item typed yet) doesn't count.
-    const missingBoxes = currentRows.filter((r) => r.item_name && (r.boxes === null || r.boxes === undefined || r.boxes === ""));
-    if (missingBoxes.length) {
-      alert(`"Boxes" is required — please fill it in for: ${missingBoxes.map((r) => r.item_name).join(", ")}`);
-      return;
-    }
+    // Boxes is left blank sometimes and that's fine to save — the empty
+    // field already shows red so staff can see it's missing, but it
+    // shouldn't stop them from saving everything else.
 
     savingRef.current = true;
     setSaveMsg("Saving…");
@@ -341,8 +337,8 @@ export default function FridgeInventory({ username, logActivity }) {
               <tr>
                 <th style={thStyle}>Item</th>
                 <th style={thStyle}>Unit</th>
-                <th style={{ ...thStyle, width: 70 }}>Boxes</th>
-                <th style={{ ...thStyle, width: 90 }}>Kits/box</th>
+                <th style={{ ...thStyle, width: 70 }}>Box</th>
+                <th style={{ ...thStyle, width: 90 }}>Quantity</th>
                 <th style={thStyle}>Expiry date</th>
                 <th style={{ ...thStyle, width: 140 }}>Signed</th>
                 <th className="no-print" style={{ ...thStyle, width: 30 }}></th>
@@ -363,10 +359,10 @@ export default function FridgeInventory({ username, logActivity }) {
                         <input style={cellInputStyle} value={r.lot_number} onChange={(e) => updateRow(r.id, "lot_number", e.target.value)} />
                       </td>
                       <td style={tdStyle}>
-                        <input type="number" min="0" required style={{ ...cellInputStyle, textAlign: "center", ...(!r.boxes && r.boxes !== 0 ? { borderColor: "#C1432B" } : {}) }} value={r.boxes ?? ""} onChange={(e) => updateRow(r.id, "boxes", e.target.value === "" ? null : Number(e.target.value))} placeholder="required" />
+                        <input type="number" min="0" style={{ ...cellInputStyle, textAlign: "center", ...(!r.boxes && r.boxes !== 0 ? { borderColor: "#C1432B" } : {}) }} value={r.boxes ?? ""} onChange={(e) => updateRow(r.id, "boxes", e.target.value === "" ? null : Number(e.target.value))} placeholder="0" />
                       </td>
                       <td style={tdStyle}>
-                        <input type="number" min="0" style={{ ...cellInputStyle, textAlign: "center" }} value={r.kits_per_box ?? ""} onChange={(e) => updateRow(r.id, "kits_per_box", e.target.value === "" ? null : Number(e.target.value))} placeholder="optional" />
+                        <input type="number" min="0" style={{ ...cellInputStyle, textAlign: "center" }} value={r.kits_per_box ?? ""} onChange={(e) => updateRow(r.id, "kits_per_box", e.target.value === "" ? null : Number(e.target.value))} placeholder="e.g. 4" />
                       </td>
                       <td style={tdStyle}>
                         <input type="date" lang="en-US" dir="ltr" style={cellInputStyle} value={r.expiry_date || ""} onChange={(e) => updateRow(r.id, "expiry_date", e.target.value)} />
