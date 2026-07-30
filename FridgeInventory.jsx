@@ -169,7 +169,7 @@ export default function FridgeInventory({ username, logActivity }) {
       id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       month, refrigerator_name: refrigeratorName, counted_by: countedBy,
       added_by: username || "", edited_by: "", edited_at: null,
-      device_group: deviceGroup, item_name: "", lot_number: "", quantity: "", expiry_date: null, row_order: maxOrder + 1,
+      device_group: deviceGroup, item_name: "", lot_number: "", quantity: "", boxes: null, kits_per_box: null, expiry_date: null, row_order: maxOrder + 1,
     };
     setAll((a) => [...a, tempRow]);
     setDirty(true);
@@ -199,16 +199,29 @@ export default function FridgeInventory({ username, logActivity }) {
 
   async function saveAll() {
     if (savingRef.current) return; // a save is already running — don't start a second one
+
+    // Boxes is required for any row that's actually been filled in — an
+    // empty placeholder row (no item typed yet) doesn't count.
+    const missingBoxes = currentRows.filter((r) => r.item_name && (r.boxes === null || r.boxes === undefined || r.boxes === ""));
+    if (missingBoxes.length) {
+      alert(`"Boxes" is required — please fill it in for: ${missingBoxes.map((r) => r.item_name).join(", ")}`);
+      return;
+    }
+
     savingRef.current = true;
     setSaveMsg("Saving…");
     if (deletedIds.length) {
       await supabase.from("fridge_inventory").delete().in("id", deletedIds);
     }
+    const withQuantity = (r) => ({
+      ...r,
+      quantity: r.kits_per_box ? `${r.boxes} box x ${r.kits_per_box}` : String(r.boxes ?? ""),
+    });
     const toInsert = currentRows.filter((r) => isTempId(r.id)).map((r) => {
-      const { id, ...rest } = r;
+      const { id, ...rest } = withQuantity(r);
       return { ...rest, expiry_date: rest.expiry_date || null };
     });
-    const toUpdate = currentRows.filter((r) => !isTempId(r.id));
+    const toUpdate = currentRows.filter((r) => !isTempId(r.id)).map(withQuantity);
 
     if (toInsert.length) await supabase.from("fridge_inventory").insert(toInsert);
 
@@ -221,6 +234,7 @@ export default function FridgeInventory({ username, logActivity }) {
       toUpdate.map((r) =>
         supabase.from("fridge_inventory").update({
           item_name: r.item_name, lot_number: r.lot_number, quantity: r.quantity,
+          boxes: r.boxes, kits_per_box: r.kits_per_box,
           expiry_date: r.expiry_date || null, counted_by: r.counted_by,
           edited_by: r.edited_by || "", edited_at: r.edited_at || null,
         }).eq("id", r.id)
@@ -327,7 +341,8 @@ export default function FridgeInventory({ username, logActivity }) {
               <tr>
                 <th style={thStyle}>Item</th>
                 <th style={thStyle}>Unit</th>
-                <th style={thStyle}>Quantity</th>
+                <th style={{ ...thStyle, width: 70 }}>Boxes</th>
+                <th style={{ ...thStyle, width: 90 }}>Kits/box</th>
                 <th style={thStyle}>Expiry date</th>
                 <th style={{ ...thStyle, width: 140 }}>Signed</th>
                 <th className="no-print" style={{ ...thStyle, width: 30 }}></th>
@@ -337,7 +352,7 @@ export default function FridgeInventory({ username, logActivity }) {
               {Object.entries(groups).map(([section, rows]) => (
                 <React.Fragment key={section}>
                   <tr>
-                    <td colSpan={6} style={{ textAlign: "center", fontWeight: 700, background: "#F7F9F8", border: "1px solid #C7D1CE", padding: "6px 0" }}>#{section}</td>
+                    <td colSpan={7} style={{ textAlign: "center", fontWeight: 700, background: "#F7F9F8", border: "1px solid #C7D1CE", padding: "6px 0" }}>#{section}</td>
                   </tr>
                   {rows.map((r) => (
                     <tr key={r.id}>
@@ -348,7 +363,10 @@ export default function FridgeInventory({ username, logActivity }) {
                         <input style={cellInputStyle} value={r.lot_number} onChange={(e) => updateRow(r.id, "lot_number", e.target.value)} />
                       </td>
                       <td style={tdStyle}>
-                        <input style={{ ...cellInputStyle, textAlign: "center" }} value={r.quantity} onChange={(e) => updateRow(r.id, "quantity", e.target.value)} placeholder="e.g. 1 box x 4" />
+                        <input type="number" min="0" required style={{ ...cellInputStyle, textAlign: "center", ...(!r.boxes && r.boxes !== 0 ? { borderColor: "#C1432B" } : {}) }} value={r.boxes ?? ""} onChange={(e) => updateRow(r.id, "boxes", e.target.value === "" ? null : Number(e.target.value))} placeholder="required" />
+                      </td>
+                      <td style={tdStyle}>
+                        <input type="number" min="0" style={{ ...cellInputStyle, textAlign: "center" }} value={r.kits_per_box ?? ""} onChange={(e) => updateRow(r.id, "kits_per_box", e.target.value === "" ? null : Number(e.target.value))} placeholder="optional" />
                       </td>
                       <td style={tdStyle}>
                         <input type="date" lang="en-US" dir="ltr" style={cellInputStyle} value={r.expiry_date || ""} onChange={(e) => updateRow(r.id, "expiry_date", e.target.value)} />
